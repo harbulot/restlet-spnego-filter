@@ -1,1 +1,1 @@
-Read me!
+This is just an experiment with SPNEGO. Nothing stable yet!
