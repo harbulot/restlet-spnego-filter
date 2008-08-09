@@ -1,0 +1,9 @@
+<configuration>
+	<sysproperty name="java.security.krb5.realm">THE.REALM</sysproperty>
+	<sysproperty name="java.security.krb5.kdc">kdc.example.org</sysproperty>
+	<krb5option name="doNotPrompt">true</krb5option>
+	<krb5option name="useKeyTab">true</krb5option>
+	<krb5option name="storeKey">true</krb5option>
+	<krb5option name="keyTab">path/to/keytabfile</krb5option>
+	<krb5option name="principal">HTTP/www.example.org</krb5option>
+</configuration>

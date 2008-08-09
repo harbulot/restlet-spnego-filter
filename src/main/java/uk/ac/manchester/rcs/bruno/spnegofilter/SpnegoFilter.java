@@ -33,9 +33,11 @@ package uk.ac.manchester.rcs.bruno.spnegofilter;
 import java.math.BigInteger;
 import java.security.Principal;
 import java.security.PrivilegedExceptionAction;
+import java.util.HashMap;
+import java.util.Map;
 
 import javax.security.auth.Subject;
-import javax.security.auth.login.LoginContext;
+import javax.security.auth.login.LoginException;
 
 import org.ietf.jgss.GSSContext;
 import org.ietf.jgss.GSSCredential;
@@ -58,136 +60,55 @@ import com.noelios.restlet.Engine;
 import com.noelios.restlet.authentication.AuthenticationHelper;
 import com.noelios.restlet.util.Base64;
 import com.sun.security.auth.callback.TextCallbackHandler;
+import com.sun.security.auth.module.Krb5LoginModule;
 
 /**
  * This is a small test filter to test SPNEGO authentication.
+ * Treat as experimental!
  * 
  * @author Bruno Harbulot
  */
-public class SpnegoFilter extends Filter {
-	private String jaasName;
-	
+public class SpnegoFilter extends Filter {	
 	private GSSManager gssManager;
 	private GSSCredential gssServerCreds;
 	
-	public SpnegoFilter(String jaasName) {
+	public SpnegoFilter() {
 		Engine.getInstance().getRegisteredAuthentications().add(0, new SpnegoAuthenticationHelper());
-		this.jaasName = jaasName;
+	}
+	
+	private Krb5LoginModule krb5Login(Subject subject) throws LoginException {
+		Map<String, String> state = new HashMap<String, String>();
+
+		@SuppressWarnings("unchecked")
+		Map<String, String> options = (Map<String, String>)getContext().getAttributes().get("krb5options");
+		
+		Krb5LoginModule login = new Krb5LoginModule();
+		login.initialize(subject, new TextCallbackHandler(), state, options);
+		if(login.login()) {
+			login.commit();
+		}
+		return login;
 	}
 	
 	private GSSContext gssInit() throws Exception {
-		LoginContext context = new LoginContext(jaasName, new TextCallbackHandler());
-	    context.login();
-	    Subject subject = context.getSubject();
+		Subject subject = new Subject();
+		Krb5LoginModule login = krb5Login(subject);
+		
 		GssInitAction gssInitAction = new GssInitAction();
 		Subject.doAs(subject, gssInitAction);
-		context.logout();
+		login.logout();
 		return gssInitAction.gssContext;
 	}
+
 	
 	private byte[] gssAcceptSecContext(GSSContext gssContext, byte[] token) throws Exception {
-		LoginContext context = new LoginContext(jaasName, new TextCallbackHandler());
-	    context.login();
-	    Subject subject = context.getSubject();
+		Subject subject = new Subject();
+		Krb5LoginModule login = krb5Login(subject);
+		
 	    GssAcceptSecContextAction action = new GssAcceptSecContextAction(gssContext, token);
 		token = Subject.doAs(subject, action);
-		context.logout();
+		login.logout();
 		return token;
-	}
-
-	@Override
-	protected int doHandle(Request request, Response response) {
-		
-		int result = Filter.STOP;
-		@SuppressWarnings("unchecked")
-		Series<Parameter> reqHeaders = (Series<Parameter>)request.getAttributes().get("org.restlet.http.headers");
-		
-		String authorizationHeader = reqHeaders.getFirstValue("Authorization");
-		
-
-		try {
-			GSSContext gssContext = gssInit();
-			
-			System.out.println("*** Received this authorization header: "+authorizationHeader);
-
-			Principal authenticatedPrincipal = null;
-			
-			Form spnegoParams = new Form();
-			
-			if (authorizationHeader != null) {
-				if (authorizationHeader.startsWith("Negotiate ")) {
-					String spnegoOutputTokenString = "";
-					
-					String spnegoInputTokenString = authorizationHeader.substring("Negotiate ".length());
-					byte[] spnegoToken;
-					try {
-						BigInteger integerToken = new BigInteger(spnegoInputTokenString, 16);
-						spnegoToken = integerToken.toByteArray();
-					} catch (NumberFormatException e) {
-						spnegoToken = Base64.decode(spnegoInputTokenString);
-					}
-					
-					if (spnegoToken.length != 0) {
-						spnegoToken = gssAcceptSecContext(gssContext, spnegoToken);
-						spnegoOutputTokenString = Base64.encode(spnegoToken, false);
-					}
-					
-					spnegoParams.add(SpnegoAuthenticationHelper.SPNEGO_TOKEN_PARAM_NAME, spnegoOutputTokenString);
-					System.out.println("*** Sending this Negotiate challenge: "+spnegoOutputTokenString);
-				} else if (authorizationHeader.startsWith("Basic ")) {
-					String basicAuthEncodedCredentials = authorizationHeader.substring("Basic ".length());
-					String basicAuthDecodedCredentials = new String(Base64.decode(basicAuthEncodedCredentials));
-					if ("basic:basic".equalsIgnoreCase(basicAuthDecodedCredentials)) {
-						authenticatedPrincipal = new Principal() {
-							public String getName() {
-								return "basic";
-							}
-						};
-					}
-				} else {
-					response.setStatus(Status.CLIENT_ERROR_UNAUTHORIZED);
-				}
-			}
-		
-			ChallengeRequest challengeReq = new ChallengeRequest(HTTP_SPNEGO, null);
-			challengeReq.setParameters(spnegoParams);
-			response.getChallengeRequests().add(challengeReq);
-			
-			ChallengeRequest basicChallengeReq = new ChallengeRequest(ChallengeScheme.HTTP_BASIC, "Test Realm");
-			response.getChallengeRequests().add(basicChallengeReq);
-			
-			if (gssContext.isEstablished()) {
-				try {
-					final GSSName srcName = gssContext.getSrcName();
-					System.out.println("*** Authenticated via GSS/SPNEGO: "+srcName);
-					System.out.println("    Type: "+srcName.getStringNameType());
-					
-					authenticatedPrincipal = new Principal() {
-						public String getName() {
-							return srcName.toString();
-						}
-					};
-				} catch (GSSException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
-			} 
-			
-			if (authenticatedPrincipal != null) {
-				// The following is only used as a quick way to pass something to show on the test web-page.
-				request.getAttributes().put("ThePrincipal", authenticatedPrincipal);
-				result = Filter.CONTINUE;
-				super.doHandle(request, response);
-			} else {
-				response.setStatus(Status.CLIENT_ERROR_UNAUTHORIZED);
-			}
-
-		} catch (Exception e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-		
-		return result;
 	}
 	
 	private class GssInitAction implements PrivilegedExceptionAction<Object> {
@@ -243,5 +164,115 @@ public class SpnegoFilter extends Filter {
 	    		sb.append(challengeString);
 	    	}
 	    }
+	}
+	
+	
+
+	@Override
+	protected int doHandle(Request request, Response response) {
+		
+		int result = Filter.STOP;
+		@SuppressWarnings("unchecked")
+		Series<Parameter> reqHeaders = (Series<Parameter>)request.getAttributes().get("org.restlet.http.headers");
+		
+		String authorizationHeader = reqHeaders.getFirstValue("Authorization");
+		
+
+		try {
+			// Initialises the GSSContext
+			GSSContext gssContext = gssInit();
+			
+			System.out.println("*** Received this authorization header: "+authorizationHeader);
+
+			Principal authenticatedPrincipal = null;
+			
+			Form spnegoParams = new Form();
+			
+			// Reads the autorisation header
+			if (authorizationHeader != null) {
+				if (authorizationHeader.startsWith("Negotiate ")) {
+					/* 
+					 * If the request contains a Negotiate auth header, the token is passed to the GSS context.
+					 * The token obtained in return (from the GSS API) will be sent back in the response.
+					 */
+					String spnegoOutputTokenString = "";
+					
+					String spnegoInputTokenString = authorizationHeader.substring("Negotiate ".length());
+					byte[] spnegoToken;
+					try {
+						BigInteger integerToken = new BigInteger(spnegoInputTokenString, 16);
+						spnegoToken = integerToken.toByteArray();
+					} catch (NumberFormatException e) {
+						spnegoToken = Base64.decode(spnegoInputTokenString);
+					}
+					
+					if (spnegoToken.length != 0) {
+						spnegoToken = gssAcceptSecContext(gssContext, spnegoToken);
+						spnegoOutputTokenString = Base64.encode(spnegoToken, false);
+					}
+					
+					spnegoParams.add(SpnegoAuthenticationHelper.SPNEGO_TOKEN_PARAM_NAME, spnegoOutputTokenString);
+					System.out.println("*** Sending this Negotiate challenge: "+spnegoOutputTokenString);
+				} else if (authorizationHeader.startsWith("Basic ")) {
+					/* 
+					 * If the request contains a Basic auth header, it is used for authentication.
+					 * For the purpose of this test, username and password are both "basic".
+					 */
+					String basicAuthEncodedCredentials = authorizationHeader.substring("Basic ".length());
+					String basicAuthDecodedCredentials = new String(Base64.decode(basicAuthEncodedCredentials));
+					if ("basic:basic".equalsIgnoreCase(basicAuthDecodedCredentials)) {
+						authenticatedPrincipal = new Principal() {
+							public String getName() {
+								return "basic";
+							}
+						};
+					}
+				} else {
+					response.setStatus(Status.CLIENT_ERROR_UNAUTHORIZED);
+				}
+			}
+		
+			/*
+			 * Adds two challenges.
+			 */
+			ChallengeRequest challengeReq = new ChallengeRequest(HTTP_SPNEGO, null);
+			challengeReq.setParameters(spnegoParams);
+			response.getChallengeRequests().add(challengeReq);
+			
+			ChallengeRequest basicChallengeReq = new ChallengeRequest(ChallengeScheme.HTTP_BASIC, "Test Realm");
+			response.getChallengeRequests().add(basicChallengeReq);
+			
+			
+			if (gssContext.isEstablished()) {
+				try {
+					final GSSName srcName = gssContext.getSrcName();
+					System.out.println("*** Authenticated via GSS/SPNEGO: "+srcName);
+					System.out.println("    Type: "+srcName.getStringNameType());
+					
+					authenticatedPrincipal = new Principal() {
+						public String getName() {
+							return srcName.toString();
+						}
+					};
+				} catch (GSSException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			} 
+			
+			if (authenticatedPrincipal != null) {
+				// The following is only used as a quick way to pass something to show on the test web-page.
+				request.getAttributes().put("ThePrincipal", authenticatedPrincipal);
+				result = super.doHandle(request, response);
+			} else {
+				response.setStatus(Status.CLIENT_ERROR_UNAUTHORIZED);
+			}
+
+		} catch (Exception e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		return result;
 	}
 }

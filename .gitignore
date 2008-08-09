@@ -3,3 +3,5 @@
 .settings
 target
 target-eclipse
+krb5.conf
+*.keytab

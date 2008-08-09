@@ -30,12 +30,13 @@ POSSIBILITY OF SUCH DAMAGE.
  */
 package uk.ac.manchester.rcs.bruno.spnegofilter;
 
+import java.io.InputStream;
 import java.security.Principal;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.Map.Entry;
 
-import javax.security.auth.login.AppConfigurationEntry;
-import javax.security.auth.login.Configuration;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.restlet.Application;
 import org.restlet.Component;
@@ -51,8 +52,14 @@ import org.restlet.resource.Resource;
 import org.restlet.resource.ResourceException;
 import org.restlet.resource.StringRepresentation;
 import org.restlet.resource.Variant;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
 
 /**
+ * Small test for the experimental SpnegoFilter.
+ * Treat as experimental!
+ * 
  * @author Bruno Harbulot
  */
 public class SpnegoTestServer {
@@ -83,8 +90,8 @@ public class SpnegoTestServer {
 
 				router.attachDefault(HelloPrincipalResource.class);
 				
-				SpnegoFilter filter = new SpnegoFilter("server");
-				//filter.gssInit();
+				SpnegoFilter filter = new SpnegoFilter();
+
 				filter.setNext(router);
 
 				return filter;
@@ -95,24 +102,48 @@ public class SpnegoTestServer {
 	}
 	
 	public static void main(String[] args) throws Exception {
-		Configuration secConfig = Configuration.getConfiguration();
-		AppConfigurationEntry[] secConfEntries = secConfig.getAppConfigurationEntry("server");
+		/*
+		 * Reads a custom option file to set the required options and properties.
+		 */
+		DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+		dbf.setNamespaceAware(false);
+		DocumentBuilder db = dbf.newDocumentBuilder();
 		
-		
-		for (AppConfigurationEntry secConfEntry: secConfEntries) {
-			System.out.println("AppConfigurationEntry: "+secConfEntry);
-			Map<String, ?> options = secConfEntry.getOptions();
-			for (Entry<String,?> entry: options.entrySet()) {
-				System.out.println(" option...    "+entry.getKey()+" = "+entry.getValue());
-			}
+		InputStream configInputStream = ClassLoader.getSystemResourceAsStream("config.xml");
+		if (configInputStream == null) {
+			throw new Exception("Could not find config.xml on the class path.");
+		}
+		Document doc = db.parse(configInputStream);
+		configInputStream.close();
+
+		NodeList syspropNodes = doc.getElementsByTagName("sysproperty");
+
+		for (int i = 0 ; i < syspropNodes.getLength(); i++) {
+			Element syspropElem = (Element) syspropNodes.item(i);
+			System.setProperty(syspropElem.getAttribute("name"), syspropElem.getTextContent());
 		}
 		
+		Map<String, String> options = new HashMap<String, String>();
+		NodeList optionNodes = doc.getElementsByTagName("krb5option");
+		for (int i = 0 ; i < optionNodes.getLength(); i++) {
+			Element optionElem = (Element) optionNodes.item(i);
+			options.put(optionElem.getAttribute("name"), optionElem.getTextContent());
+		}
+		
+		/*
+		 * Creates a component with the default application.
+		 */
         Component component = new Component();
 
         component.getServers().add(Protocol.HTTP, 8182);
 
-        component.getDefaultHost().attach(
-                new SpnegoTestApplication());
+        Context appContext = new Context();
+        appContext.getAttributes().put("krb5options",options);
+        SpnegoTestApplication spnegoTestApplication = new SpnegoTestApplication();
+        spnegoTestApplication.setContext(appContext);
+        
+		component.getDefaultHost().attach(
+                spnegoTestApplication);
 
         component.start();
 	}
