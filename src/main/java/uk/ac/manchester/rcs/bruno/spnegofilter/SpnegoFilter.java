@@ -27,6 +27,12 @@ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
 POSSIBILITY OF SUCH DAMAGE.
 
+--------------------------------------------------------------------------
+
+This code is also contributed to the Restlet project as part of the 
+Joint Copyright Assignment:
+   http://www.restlet.org/community/contribute
+
  */
 package uk.ac.manchester.rcs.bruno.spnegofilter;
 
